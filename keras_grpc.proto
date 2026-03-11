@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package keras;
+
+service KerasPrediction {
+  rpc Predict (ImageRequest) returns (PredictionResponse);
+}
+
+message ImageRequest {
+  string filename = 1;
+  bytes image = 2;
+}
+
+message PredictionResponse {
+  string filename = 1;
+  string predicted_class = 2;
+  float confidence = 3;
+}
