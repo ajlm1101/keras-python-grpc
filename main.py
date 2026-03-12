@@ -11,7 +11,6 @@ logging.basicConfig(level = logging.INFO)
 log = logging.getLogger("Keras_gRPC")
 log.info("Iniciando Keras gRPC...")
 
-# Usar comando python -m grpc_tools.protoc -I . --python_out=.  --grpc_python_out=.  keras_grpc.proto para crear
 import keras_grpc_pb2
 import keras_grpc_pb2_grpc
 
