@@ -287,7 +287,7 @@ Esto generará una imagen llamada **keras-grpc:v1** con el servidor y todas sus 
 Para iniciar el contenedor:
 
 ```bash
-docker run -p 50051:50051 keras-grpc:v1
+docker run --name keras-grpc -p 50051:50051 keras-grpc:v1
 ```
 
 Esto expone el servidor gRPC en el **puerto 50051 del host**, permitiendo que los clientes gRPC se conecten.
