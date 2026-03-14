@@ -1,25 +1,27 @@
+# Imagen base
 FROM python:3.12.10
 
+# Directorio de trabajo
 WORKDIR /app
 
-# evitar cache y archivos pyc
+# Variables de entorno
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# copiamos requirements, modelo y codigo fuente
+# Copiamos archivos del host al contenedor
 COPY mobilenetV2_flowers.keras .
 COPY keras_grpc.proto .
 COPY requirements.txt .
 COPY main.py .
 
-# instalar dependencias python
+# Instalamos dependencias
 RUN pip install --no-cache-dir -r requirements.txt
 
-# generar codigo gRPC desde el proto
+# Generamos codigo gRPC desde el fichero proto
 RUN python -m grpc_tools.protoc -I . --python_out=.  --grpc_python_out=.  keras_grpc.proto
 
-# exponer puerto gRPC
+# Exponemos puerto del servicio
 EXPOSE 50051
 
-# ejecutar servidor
+# Inciamos el servidor
 CMD ["python", "main.py"]

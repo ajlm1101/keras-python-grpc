@@ -2,9 +2,8 @@
 
 ## Descripción general
 
-Este proyecto implementa un **servidor gRPC para clasificación de imágenes de flores** utilizando un modelo de **Deep Learning basado en MobileNetV2** entrenado con TensorFlow/Keras.
-
-El servidor permite enviar una imagen mediante una petición **gRPC** y recibir como respuesta la **clase de flor predicha junto con su nivel de confianza**.
+Este proyecto implementa un **servidor gRPC para clasificación de imágenes de flores** utilizando un modelo entrenado con TensorFlow/Keras.
+El servidor recibe una imagen mediante una petición gRPC y envía como respuesta la clase de flor predicha junto con su nivel de confianza.
 
 El modelo cargado (`mobilenetV2_flowers.keras`) ha sido entrenado para clasificar imágenes en cinco categorías de flores:
 
@@ -14,8 +13,6 @@ El modelo cargado (`mobilenetV2_flowers.keras`) ha sido entrenado para clasifica
 * Sunflowers
 * Roses
 
-El servicio recibe una imagen en formato binario, la procesa para adaptarla al formato requerido por el modelo y devuelve la predicción correspondiente.
-
 ---
 
 ## Arquitectura del sistema
@@ -24,12 +21,12 @@ El flujo de ejecución del sistema es el siguiente:
 
 1. Se inicia el servidor gRPC y se carga el modelo de TensorFlow.
 2. Un cliente envía una petición gRPC al método `Predict`.
-3. La imagen se preprocesa para que tenga el formato requerido por MobileNetV2.
-4. El modelo realiza la predicción.
+3. La imagen se preprocesa para que tenga el formato requerido por el modelo.
+4. Este realiza la predicción.
 5. El servidor devuelve la clase predicha y la probabilidad asociada.
 
 ```
-Cliente gRPC -> Servidor gRPC -> Preprocesado imagen -> Modelo MobileNetV2 -> Predicción -> Respuesta gRPC
+Cliente gRPC -> Servidor gRPC -> Preprocesado imagen -> Modelo -> Predicción -> Respuesta gRPC
 ```
 
 ---
@@ -44,18 +41,18 @@ Cliente gRPC -> Servidor gRPC -> Preprocesado imagen -> Modelo MobileNetV2 -> Pr
 * **logging**: registro de eventos y errores de la aplicación.
 * **io**: manejo de datos binarios de la imagen recibida.
 
-Además se utiliza:
+Además se utiliza `tensorflow.keras.applications.mobilenet_v2.preprocess_input` para aplicar el preprocesamiento necesario para el modelo.
 
-`tensorflow.keras.applications.mobilenet_v2.preprocess_input`
-
-para aplicar el preprocesamiento necesario para el modelo MobileNetV2.
-
-También se utilizan los módulos generados a partir de **Protocol Buffers**:
+También se utilizan los siguientes módulos generados:
 
 * `keras_grpc_pb2`
 * `keras_grpc_pb2_grpc`
 
-Estos archivos definen los **mensajes y servicios gRPC** utilizados por el servidor.
+Estos archivos definen los mensajes y servicios gRPC utilizados por el servidor. Pueden ser generados de forma automática mediante el siguiente comando a partir del fichero `keras_grpc.proto`:
+
+```
+python -m grpc_tools.protoc -I . --python_out=.  --grpc_python_out=.  keras_grpc.proto
+```
 
 ---
 
@@ -101,11 +98,9 @@ MODEL_PATH = "mobilenetV2_flowers.keras"
 IMG_SIZE = (160, 160)
 ```
 
-**CLASS_NAMES:** Lista de clases que el modelo puede predecir.
-
-**MODEL_PATH:** Ruta del archivo del modelo entrenado en formato `.keras`.
-
-**IMG_SIZE:** Tamaño al que se redimensionan todas las imágenes antes de enviarlas al modelo.
+* **CLASS_NAMES:** Lista de clases que el modelo puede predecir.
+* **MODEL_PATH:** Ruta del archivo del modelo entrenado en formato `.keras`.
+* **IMG_SIZE:** Tamaño al que se redimensionan todas las imágenes antes de enviarlas al modelo.
 
 ### Carga del modelo
 
@@ -119,17 +114,23 @@ Esto permite que las predicciones posteriores sean rápidas, evitando recargar e
 
 ### Preprocesamiento de la imagen
 
-La imagen se preprocesa mediante la siguiente función:
+La siguiente funcion se encarga de preparar la imagen recibida para ser utilizada por el modelo:
 
 ```python
 def preprocess_image(image_bytes):
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    image = image.resize(IMG_SIZE)
+    image_array = np.array(image, dtype=np.float32)
+    image_array = preprocess_input(image_array)
+    image_array = np.expand_dims(image_array, axis=0)
+    return image_array
 ```
 
-Esta se encarga de preparar la imagen recibida para ser utilizada por el modelo. Recibe el siguiente parámetro:
+Recibe el siguiente parámetro:
 
 * `image_bytes`: imagen recibida en formato binario.
 
-El proceso que realiza es el siguiente:
+A continuación, se describe el proceso que realiza
 
 1. Abre la imagen desde los bytes recibidos.
 2. Convierte la imagen a formato RGB.
@@ -148,19 +149,25 @@ Este formato es el esperado por el modelo para realizar predicciones.
 
 ### Servicio gRPC
 
-El servicio gRPC se implementa mediante la clase:
+El servicio gRPC se implementa mediante la clase `KerasPredictionService`. Esta deberá implementar los métodos definidos en el servicio descrito. En este caso solo implementa el método `Predict()`.
 
 ```python
-class KerasPredictionService(keras_grpc_pb2_grpc.KerasPredictionServicer)
+class KerasPredictionService(keras_grpc_pb2_grpc.KerasPredictionServicer):
+
+    def Predict(self, request, context):
+        img = preprocess_image(request.image)
+        preds = model.predict(img)
+        idx = np.argmax(preds[0])
+        predicted_class = CLASS_NAMES[idx]
+        confidence = float(preds[0][idx])
+        return keras_grpc_pb2.PredictionResponse(
+            filename=request.filename,
+            predicted_class=predicted_class,
+            confidence=confidence
+        )
 ```
 
-Esta clase deberá implementar los métodos definidos en el servicio descrito. En este caso solo implementa el método **Predict()**.
-
-#### Método Predict
-
-Este método recibe una imagen y devuelve la predicción del modelo.
-
-La petición (`PredictionRequest`) contiene:
+Este método recibe una imagen y devuelve la predicción del modelo. La petición (`PredictionRequest`) contiene:
 
 * `filename`: nombre del archivo enviado
 * `image`: imagen en formato binario
@@ -171,13 +178,6 @@ Internamente:
 2. Se ejecuta la predicción con el modelo.
 3. Se obtiene la clase con mayor probabilidad.
 4. Se construye la respuesta gRPC.
-
-```python
-preds = model.predict(img)
-idx = np.argmax(preds[0])
-predicted_class = CLASS_NAMES[idx]
-confidence = float(preds[0][idx])
-```
 
 El servidor devuelve un mensaje `PredictionResponse` con la siguiente información:
 
@@ -191,47 +191,24 @@ El servidor se crea mediante la función `serve()`:
 
 ```python
 def serve():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=3))
+    keras_grpc_pb2_grpc.add_KerasPredictionServicer_to_server(
+        KerasPredictionService(), server
+    )
+    server.add_insecure_port("[::]:50051")
+    server.start()
+    log.info("Servicor gRPC corriendo en puerto 50051. Esperando peticiones...")
+    server.wait_for_termination()
 ```
 
 En esta función se realizan las siguientes operaciones:
 
-1. Se crea un servidor gRPC con un **pool de hilos**.
+1. Se crea un servidor gRPC con un **pool de 3 hilos**.
 2. Se registra el servicio de predicción.
 3. Se configura el puerto de escucha.
 4. Se inicia el servidor y queda esperando peticiones.
 
-```python
-server = grpc.server(futures.ThreadPoolExecutor(max_workers=3))
-```
-
-El servidor utiliza un **pool de 3 hilos** para procesar peticiones concurrentes.
-
-Para registrar el servicio:
-
-```python
-keras_grpc_pb2_grpc.add_KerasPredictionServicer_to_server(
-    KerasPredictionService(), server
-)
-```
-
-Esto conecta la implementación del servicio con el servidor gRPC.
-
-Para configurar el puerto de escucha:
-
-```python
-server.add_insecure_port("[::]:50051")
-```
-
 El servidor escucha en el **puerto 50051**, que es el puerto habitual utilizado por servicios gRPC.
-
-Para iniciar el servidor:
-
-```python
-server.start()
-server.wait_for_termination()
-```
-
-El servidor se inicia y permanece activo esperando nuevas peticiones de clientes gRPC.
 
 ---
 
@@ -244,11 +221,26 @@ Para facilitar el despliegue y asegurar que el servidor gRPC se ejecute en un en
 El proyecto incluye un `Dockerfile` que permite construir la imagen del servidor gRP. Este archivo:
 
 * Utiliza **Python 3.12.10** como imagen base.
-* Copia el **modelo**, el archivo **.proto**, las dependencias y el código fuente al contenedor.
+* Copia el **modelo**, el archivo **keras_grpc.proto**, las dependencias y el código fuente al contenedor.
 * Instala las librerías definidas en `requirements.txt`.
 * Genera el código gRPC a partir del archivo `.proto`.
 * Expone el puerto **50051**, que es el puerto en el que el servidor gRPC escucha.
 * Ejecuta el servidor gRPC con `python main.py`.
+
+```Dockerfile
+FROM python:3.12.10
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+COPY mobilenetV2_flowers.keras .
+COPY keras_grpc.proto .
+COPY requirements.txt .
+COPY main.py .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m grpc_tools.protoc -I . --python_out=.  --grpc_python_out=.  keras_grpc.proto
+EXPOSE 50051
+CMD ["python", "main.py"]
+```
 
 ### Construcción de la imagen
 
